@@ -134,14 +134,14 @@ exports.communityApproveEmail = async (profileId, isApprove) => {
       userData[0]?.FirstName + " " + userData[0]?.LastName;
     let msg = "";
     if (isApprove === "Y") {
-      msg = `Hindu.social has approved your Practitioner account.`;
+      msg = `Sikh.social has approved your Practitioner account.`;
     } else {
-      msg = `Hindu.social has unapproved your Practitioner account.`;
+      msg = `Sikh.social has unapproved your Practitioner account.`;
     }
     let redirectUrl = `${environment.FRONTEND_URL}`;
     const mailObj = {
       email: userData[0].Email,
-      subject: "Hindu-social notification",
+      subject: "Sikh-social notification",
       root: "../email-templates/notification.ejs",
       templateData: { name: name, msg: msg, url: redirectUrl },
     };
@@ -273,10 +273,10 @@ const getIcalObjectInstance = async (
   email
 ) => {
   const cal = ical({
-    domain: "hindu.social",
+    domain: "sikh.social",
     name: "Appointments Reminder",
   });
-  //   cal.domain("hindu.social");
+  //   cal.domain("sikh.social");
   cal.createEvent({
     start: starttime, // eg : moment()
     end: moment(starttime).add(30, "min"),
