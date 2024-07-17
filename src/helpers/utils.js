@@ -292,6 +292,22 @@ const getIcalObjectInstance = async (
   return cal;
 };
 
+exports.notificationMailOnInvite = async (userData) => {
+  let name = userData?.userName || userData.firstName;
+  let msg = userData.msg;
+  let redirectUrl = `${environment.FRONTEND_URL}profile-chats`;
+
+  const mailObj = {
+    email: userData.email,
+    subject: "Sikh.social notification",
+    root: "../email-templates/notification.ejs",
+    templateData: { name: name, msg: msg, url: redirectUrl },
+  };
+
+  await email.sendMail(mailObj);
+  return;
+};
+
 exports.executeQuery = async (query, values = []) => {
   return new Promise((resolve, reject) => {
     db.query(query, values, function (err, result) {
