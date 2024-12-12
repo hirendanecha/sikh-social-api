@@ -5,9 +5,9 @@ module.exports = function () {
   this.generateJwtToken = (user) => {
     const payload = {
       user: {
-        id: user.profileId,
-        username: user.Username,
-        active: user.IsActive,
+        id: user?.profileId,
+        username: user?.Username,
+        active: user?.IsActive,
       },
     };
 
