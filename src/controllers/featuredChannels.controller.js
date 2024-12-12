@@ -1,6 +1,7 @@
 const featuredChannels = require("../models/featuredChannels.model");
 const utils = require("../helpers/utils");
 const { getPagination, getPaginationData } = require("../helpers/fn");
+const ejsEmail = require("../helpers/email");
 
 exports.getChannels = async function (req, res) {
   const data = await featuredChannels.getChannels();
@@ -255,4 +256,54 @@ exports.removeFormChannel = function (req, res) {
       });
     }
   );
+};
+
+
+
+exports.createChannelApplication = async function (req, res) {
+  const data = { ...req.body };
+  if (data) {
+    const application = await featuredChannels.createChannelApplication(data);
+    if (application) {
+      await channelApplicationMail(data);
+      res.send({
+        error: false,
+        data: application,
+        message: "Thank you! well get with you shortly",
+      });
+    }
+  } else {
+    res.status(400).send({
+      error: true,
+      message: "data not found",
+    });
+  }
+};
+
+
+const channelApplicationMail = async (applicationData) => {
+  const data = applicationData;
+  const name = data?.username;
+  const userEmail = data?.email;
+  const channelName = data?.channelName;
+  const channelUrl =
+    data?.bitChuteUrl || data?.youtubeUrl || data?.rumbleUrl || data?.otherUrl;
+  let msg = "You have a new Channel Application.";
+  const Emails = ["freedombuzz@proton.me", "support@freedom.buzz"];
+  for (const email of Emails) {
+    const mailObj = {
+      email: email,
+      subject: "New Channel Application has been registered",
+      root: "../email-templates/channel-application.ejs",
+      templateData: {
+        name: name,
+        email: userEmail,
+        url: channelUrl,
+        channelName: channelName,
+        msg: msg,
+      },
+      // url: redirectUrl,
+    };
+    await ejsEmail.sendMail(mailObj);
+  }
 };

@@ -1,10 +1,10 @@
 let logger = console;
 const socket = {};
-const { post, param } = require("../routes");
 const socketService = require("../service/socket-service");
 const chatService = require("../service/chat-service");
 const environment = require("../environments/environment");
 const jwt = require("jsonwebtoken");
+const Profile = require("../models/profile.model");
 
 socket.config = (server) => {
   const io = require("socket.io")(server, {
@@ -14,6 +14,7 @@ socket.config = (server) => {
     },
   });
   socket.io = io;
+  let onlineUsers = [];
 
   io.use((socket, next) => {
     try {
@@ -29,19 +30,28 @@ socket.config = (server) => {
           return next(err);
         }
         socket.user = decoded.user;
-        // Function to join existing rooms
-        const chatData = await chatService.getRoomsIds(socket.user.id);
-        if (chatData) {
-          for (const roomId of chatData.roomsIds) {
-            const chat = roomId;
-            socket.join(`${chat.roomId}`);
-          }
-          for (const groupId of chatData?.groupsIds) {
-            const chat = groupId;
-            socket.join(`${chat.groupId}`);
+        if (decoded.user.username !== "admin") {
+          const [profile] = await Profile.FindById(decoded.user.id);
+          if (profile?.IsSuspended === "Y") {
+            const err = new Error("user has been suspended");
+            return next(err);
           }
         }
-        socket.join(`${socket.user?.id}`);
+        // Function to join existing rooms
+        if (socket.user.id) {
+          const chatData = await chatService.getRoomsIds(socket.user.id);
+          if (chatData) {
+            for (const roomId of chatData?.roomsIds) {
+              const chat = roomId;
+              socket.join(`${chat.roomId}`);
+            }
+            for (const groupId of chatData?.groupsIds) {
+              const chat = groupId;
+              socket.join(`${chat.groupId}`);
+            }
+          }
+          socket.join(`${socket.user?.id}`);
+        }
         next();
       });
     } catch (error) {
@@ -79,11 +89,45 @@ socket.config = (server) => {
       });
     });
 
+    socket.on("online-users", async (cb) => {
+      logger.info("online user", {
+        id: socket.id,
+        method: "online",
+        type: typeof cb,
+      });
+      const newUserId = socket.user.id;
+      if (!onlineUsers.some((user) => user.userId === newUserId)) {
+        const status = await chatService.userStatus(newUserId);
+        console.log("userStatus", status);
+        if (status) {
+          onlineUsers.push({
+            userId: newUserId,
+            socketId: socket.id,
+            status: status,
+          });
+        } else {
+          onlineUsers.push({ userId: newUserId, socketId: socket.id });
+        }
+      }
+      io.emit("get-users", onlineUsers);
+      // return cb(onlineUsers);
+    });
+
+    socket.on("offline", () => {
+      // remove user from active users
+      onlineUsers = onlineUsers.filter((user) => user.socketId !== socket.id);
+      // send all online users to all users
+      io.emit("get-users", onlineUsers);
+    });
+
     socket.on("disconnect", () => {
       logger.info("disconnected", {
         id: socket.id,
         method: "disconnect",
       });
+      onlineUsers = onlineUsers.filter((user) => user.socketId !== socket.id);
+      // send all online users to all users
+      io.emit("get-users", onlineUsers);
     });
 
     socket.on("rooms", (params, cb) => {
@@ -102,8 +146,6 @@ socket.config = (server) => {
 
     // socket for post //
     socket.on("get-new-post", async (params) => {
-      console.log(params);
-
       logger.info("New post found", {
         method: "New post found",
         params: params,
@@ -121,30 +163,25 @@ socket.config = (server) => {
       });
       try {
         const data = await socketService.createPost(params);
-        console.log(data);
         if (data?.posts) {
           io.emit("new-post-added", data?.posts);
-
+          console.log({ notifications: data?.notifications });
           if (data?.notifications) {
             for (const key in data?.notifications) {
-              if (Object.hasOwnProperty.call(data?.notifications, key)) {
-                const notification = data?.notifications[key];
-
-                io.to(`${notification.notificationToProfileId}`).emit(
-                  "notification",
-                  notification
-                );
-              }
+              const notification = data?.notifications[key];
+              console.log({ notification });
+              io.to(`${notification.notificationToProfileId}`).emit(
+                "notification",
+                notification
+              );
             }
           }
 
-          const socketData = await socketService.getPost(params);
-          if (typeof cb === "function") cb(socketData);
-          socket.broadcast.emit("new-post", socketData);
+          // const socketData = await socketService.getPost(params);
+          // if (typeof cb === "function") cb(socketData);
+          // socket.broadcast.emit("new-post", socketData);
         }
-      } catch (error) {
-        console.log(error);
-      }
+      } catch (error) {}
     });
 
     // socket for community //
@@ -167,7 +204,6 @@ socket.config = (server) => {
         params: params,
       });
       const post = await socketService.createCommunityPost(params);
-      console.log(post);
       if (post) {
         socket.emit("create-community-post", post);
         const data = await socketService.getCommunityPost(params);
@@ -179,27 +215,21 @@ socket.config = (server) => {
     });
 
     socket.on("get-community-post", async (params) => {
-      console.log(params);
-
       logger.info("New post found", {
         method: "New post found",
         params: params,
       });
       const data = await socketService.getCommunityPost(params);
       if (data) {
-        console.log("posts", data);
         socket.emit("community-post", data);
       }
     });
 
     socket.on("get-new-community", async (params) => {
-      console.log(params);
-
       logger.info("New community found", {
         method: "New community found",
         params: params,
       });
-      console.log(params);
       const communityList = await socketService.getCommunity(params);
       if (communityList) {
         socket.emit("new-community", communityList);
@@ -208,29 +238,23 @@ socket.config = (server) => {
 
     //socket for admin //
     socket.on("get-unApprove-community", async (params) => {
-      console.log(params);
-
       logger.info("New community found", {
         method: "New community found",
         params: params,
       });
       const communityList = await socketService.getUnApproveCommunity(params);
       if (communityList) {
-        console.log(communityList);
         socket.emit("get-unApprove-community", communityList);
       }
     });
 
     socket.on("get-Approve-community", async (params) => {
-      console.log(params);
-
       logger.info("New community found", {
         method: "New community found",
         params: params,
       });
       const communityList = await socketService.getApproveCommunity(params);
       if (communityList) {
-        console.log(communityList);
         socket.emit("get-Approve-community", communityList);
       }
     });
@@ -250,7 +274,6 @@ socket.config = (server) => {
             notificationByProfileId: params.profileId,
             actionType: params.actionType,
           });
-          console.log(notification);
           // notification - emit - to user
           io.to(`${notification.notificationToProfileId}`).emit(
             "notification",
@@ -285,8 +308,6 @@ socket.config = (server) => {
     });
 
     socket.on("send-notification", (params) => {
-      console.log(params);
-
       logger.info("likeOrDislikeNotify", {
         method: "User like on post",
         params: params,
@@ -294,10 +315,8 @@ socket.config = (server) => {
     });
 
     socket.on("comments-on-post", async (params) => {
-      console.log(params);
       const data = await socketService.createComments(params);
       if (data.comments) {
-        console.log("comments-on-post====>", data?.comments);
         io.emit("comments-on-post", data?.comments);
       }
       if (data?.notifications) {
@@ -324,7 +343,6 @@ socket.config = (server) => {
       });
       if (params.actionType) {
         const data = await socketService.likeFeedComment(params);
-        console.log(data.comments);
         socket.broadcast.emit("likeOrDislikeComments", data.comments);
         const notification = await socketService.createNotification({
           notificationToProfileId: params.toProfileId,
@@ -333,7 +351,6 @@ socket.config = (server) => {
           notificationByProfileId: params.profileId,
           actionType: params.actionType,
         });
-        console.log(notification);
         // notification - emit - to user
         io.to(`${notification.notificationToProfileId}`).emit(
           "notification",
@@ -363,6 +380,7 @@ socket.config = (server) => {
       });
       try {
         if (params.profileId) {
+          await socketService.readNotification(params.profileId);
           params["isRead"] = "Y";
           io.to(`${params.profileId}`).emit("isReadNotification_ack", params);
         }
@@ -370,8 +388,23 @@ socket.config = (server) => {
         return error;
       }
     });
-     // Message Socket //
-     socket.on("join-chat-room", async (params) => {
+
+    socket.on("get-meta", async (params) => {
+      logger.info("meta", {
+        method: "get Meta",
+        params: params,
+      });
+      if (params.url) {
+        const data = await socketService.getMeta(params);
+        if (data) {
+          socket.emit("get-meta", data);
+          // return data;
+        }
+      }
+    });
+
+    // Message Socket //
+    socket.on("join-chat-room", async (params) => {
       socket.join(params.room, {
         ...params,
       });
@@ -442,6 +475,7 @@ socket.config = (server) => {
         if (params) {
           const data = await chatService.createChatRoom(params);
           if (data?.room) {
+            socket.join(`${data.room.roomId}`);
             // io.to(`${params.profileId2}`).emit("new-room", data.id);
             if (data?.notification) {
               if (data?.notification) {
@@ -474,20 +508,29 @@ socket.config = (server) => {
           console.log("new-message", data);
           if (data.newMessage) {
             if (params?.groupId) {
-              io.to(`${params.groupId}`).emit("new-message", data.newMessage);
+              if (!socket.rooms.has(`${params?.groupId}`)) {
+                socket.join(`${params?.groupId}`);
+              }
+              io.to(`${params?.groupId || socket.user.id}`).emit(
+                "new-message",
+                data.newMessage
+              );
               if (data?.notification) {
-                if (data?.notification) {
-                  io.to(`${params.groupId}`).emit(
-                    "notification",
-                    data?.notification
-                  );
-                }
+                io.to(`${params?.groupId}`).emit(
+                  "notification",
+                  data?.notification
+                );
               }
             } else {
-              console.log("in=========>");
-              io.to(`${params.roomId}`).emit("new-message", data.newMessage);
+              if (!socket.rooms.has(`${params?.roomId}`)) {
+                socket.join(`${params?.roomId}`);
+              }
+              io.to(`${params?.roomId || socket.user.id}`).emit(
+                "new-message",
+                data.newMessage
+              );
               if (data?.notification) {
-                io.to(`${params?.roomId}`).emit(
+                io.to(`${data?.notification?.notificationToProfileId}`).emit(
                   "notification",
                   data?.notification
                 );
@@ -569,6 +612,9 @@ socket.config = (server) => {
           const data = await chatService.acceptRoom(params);
           console.log(data);
           if (data) {
+            if (!socket.rooms.has(`${data?.room?.roomId}`)) {
+              socket.join(`${data?.room?.roomId}`);
+            }
             io.to(`${data?.notification?.notificationToProfileId}`).emit(
               "notification",
               data?.notification
@@ -598,7 +644,7 @@ socket.config = (server) => {
           if (params.groupId) {
             io.to(`${params?.groupId}`).emit("new-message", data);
           } else {
-            io.to(`${params?.profileId}`).emit("new-message", data);
+            io.to(`${params?.roomId}`).emit("new-message", data);
           }
           if (data) {
             return cb(data);
@@ -619,7 +665,10 @@ socket.config = (server) => {
       try {
         if (params) {
           const data = await chatService.deleteMessage(params);
-          io.to(`${params?.profileId}`).emit("new-message", data);
+          io.to(`${params?.roomId || params?.groupId}`).emit(
+            "new-message",
+            data
+          );
           if (data) {
             return cb(data);
           }
@@ -669,21 +718,17 @@ socket.config = (server) => {
             if (params.groupId) {
               console.log("in=========>");
               io.to(`${params.groupId}`).emit("new-message", data.newMessage);
-              if (data?.notification) {
-                io.to(`${params.groupId}`).emit(
-                  "notification",
-                  data?.notification
-                );
-              }
+              io.to(`${params.groupId}`).emit(
+                "notification",
+                data?.notification
+              );
             } else {
               console.log("in=========>");
               io.to(`${params.roomId}`).emit("new-message", data.newMessage);
-              if (data?.notification) {
-                io.to(`${params.roomId}`).emit(
-                  "notification",
-                  data?.notification
-                );
-              }
+              io.to(`${params.roomId}`).emit(
+                "notification",
+                data?.notification
+              );
             }
             // for (const key in data?.notifications) {
             //   if (Object.hasOwnProperty.call(data?.notifications, key)) {
@@ -711,11 +756,10 @@ socket.config = (server) => {
       try {
         if (params) {
           const data = await chatService.declineCall(params);
-          if (params?.roomId) {
+          if (params?.roomId && data) {
             io.to(`${params?.roomId}`).emit("notification", data);
             return cb(true);
-          } else if (params.groupId) {
-            console.log("decline-group-calll===>>>>>>>>>>>>>>>>>>>>>", data);
+          } else if (params.groupId && data) {
             io.to(`${params?.groupId}`).emit("notification", data);
             return cb(true);
           }
@@ -772,6 +816,11 @@ socket.config = (server) => {
             for (const notification of data?.notifications) {
               if (notification?.notificationToProfileId) {
                 io.to(`${notification?.notificationToProfileId}`).emit(
+                  "notification",
+                  notification
+                );
+              } else {
+                io.to(`${notification?.groupId}`).emit(
                   "notification",
                   notification
                 );
@@ -869,9 +918,10 @@ socket.config = (server) => {
           };
           data["Username"] = await chatService.getUserDetails(data.profileId);
           if (params.roomId) {
-            io.to(`${data?.roomId}`).emit("typing", data);
+            io.to(`${data?.roomId || socket.user.id}`).emit("typing", data);
+            // socket.to(`${data?.roomId}`).emit("typing", data);
           } else {
-            io.to(`${data?.groupId}`).emit("typing", data);
+            io.to(`${data?.groupId || socket.user.id}`).emit("typing", data);
           }
           if (cb) {
             return cb();
@@ -978,6 +1028,116 @@ socket.config = (server) => {
           const data = await chatService.getRoomByProfileId(params);
           if (cb) {
             return cb(data);
+          }
+        }
+      } catch (error) {
+        cb(error);
+      }
+    });
+
+    socket.on("check-call", async (params, cb) => {
+      logger.info("check-call", {
+        ...params,
+        address,
+        id: socket.id,
+        method: "check-call",
+      });
+      try {
+        if (params) {
+          const data = await chatService.checkCall(params);
+          if (cb) {
+            return cb(data);
+          }
+        }
+      } catch (error) {
+        cb(error);
+      }
+    });
+
+    socket.on("end-call", async (params) => {
+      logger.info("end-call", {
+        ...params,
+        address,
+        id: socket.id,
+        method: "end-call",
+      });
+      try {
+        if (params) {
+          const data = await chatService.endCall(params);
+          if (params.roomId) {
+            return io.to(`${params.roomId}`).emit("notification", {
+              actionType: "EC",
+              roomId: params.roomId,
+              notificationByProfileId: params.profileId,
+            });
+          }
+          return;
+        }
+      } catch (error) {
+        return error;
+      }
+    });
+
+    socket.on("logout", async (params) => {
+      logger.info("logout", {
+        ...params,
+        address,
+        id: socket.id,
+        method: "logout",
+      });
+      try {
+        if (params) {
+          io.to(`${params.profileId}`).emit("logout-check", params);
+        }
+      } catch (error) {
+        cb(error);
+      }
+    });
+
+    socket.on("send-notification-email", async (params) => {
+      logger.info("notification-email", {
+        ...params,
+        address,
+        id: socket.id,
+        method: "notification-email",
+      });
+      try {
+        if (params) {
+          const data = await chatService.sendNotificationEmail(params);
+        }
+      } catch (error) {
+        cb(error);
+      }
+    });
+
+    socket.on("suspend-user", async (params, cb) => {
+      logger.info("suspend-user", {
+        ...params,
+        address,
+        id: socket.id,
+        method: "suspend-user",
+      });
+      try {
+        if (params) {
+          const data = await socketService.suspendUser(params);
+          const notificationData = {
+            actionType: "S",
+            notificationDesc: "Your account has been suspended by Admin",
+          };
+          if (data) {
+            if (params.isSuspended === "Y") {
+              io.to(`${params.profileId}`).emit(
+                "notification",
+                notificationData
+              );
+            }
+            cb({
+              error: false,
+              message:
+                params.isSuspended === "Y"
+                  ? "User suspend successfully"
+                  : "User unsuspend successfully",
+            });
           }
         }
       } catch (error) {

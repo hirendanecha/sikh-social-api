@@ -1,5 +1,4 @@
 var db = require("../../config/db.config");
-require("../common/common")();
 const environment = require("../environments/environment");
 const { executeQuery } = require("../helpers/utils");
 
@@ -18,6 +17,8 @@ var Community = function (community) {
   this.Zip = community?.Zip;
   this.County = community?.County;
   this.address = community?.address;
+  this.Email = community?.Email;
+  this.MobileNo = community?.MobileNo;
 };
 
 Community.findAllCommunity = async function (
@@ -227,23 +228,13 @@ Community.findCommunityBySlug = async function (slug) {
   const communities = await executeQuery(communityQuery, [slug]);
   const community = communities?.[0] || {};
 
-  // if (community?.Id && community.pageType === "page") {
-  // }
-  const getMembersQuery =
-    "select cm.*,p.Username, p.ProfilePicName,p.FirstName,p.LastName from communityMembers as cm left join profile as p on p.ID = cm.profileId where cm.communityId = ?;";
-  const members = await executeQuery(getMembersQuery, [community?.Id]);
-  community["memberList"] = members;
-  if (community.pageType === "community") {
-    const query1 =
-      "select pe.eId,eh.name from practitioner_emphasis as pe left join emphasis_healing as eh on eh.eId = pe.eId where pe.communityId =? ";
-    const query2 =
-      "select pa.aId,ah.name from practitioner_area as pa left join area_healing as ah on ah.aId = pa.aId where pa.communityId =? ";
-    const values1 = [community.Id];
-    const emphasis = await executeQuery(query1, values1);
-    const areas = await executeQuery(query2, values1);
-    community.emphasis = emphasis;
-    community.areas = areas;
+  if (community?.Id) {
+    const getMembersQuery =
+      "select cm.*,p.Username, p.ProfilePicName,p.FirstName,p.LastName from communityMembers as cm left join profile as p on p.ID = cm.profileId where cm.communityId = ?;";
+    const members = await executeQuery(getMembersQuery, [community?.Id]);
+    community["memberList"] = members;
   }
+
   return community;
 };
 
@@ -310,7 +301,7 @@ Community.createCommunityAdminByMA = async function (data) {
 Community.getLocalCommunities = async function (id) {
   const query =
     // "select * from community where profileId = ? and isApprove = 'Y' order by creationDate desc limit 3";
-    `SELECT c.* FROM community AS c LEFT JOIN communityMembers AS cm ON cm.communityId = c.Id WHERE c.isApprove = 'Y' AND cm.profileId = ? GROUP BY c.Id limit 3`;
+    `SELECT c.* FROM community AS c LEFT JOIN communityMembers AS cm ON cm.communityId = c.Id WHERE c.isApprove = 'Y' AND cm.profileId = ? GROUP BY c.Id limit 6`;
   const communities = await executeQuery(query, [id]);
   return communities;
 };
@@ -332,24 +323,26 @@ Community.getCommunity = async function (id, pageType) {
   console.log(communityList);
   const localCommunities = [];
   for (const key in communityList) {
-    const query =
-      "select cm.profileId from communityMembers as cm where cm.communityId = ?;";
+    // const query1 =
+    //   "select cm.profileId from communityMembers as cm where cm.communityId = ?;";
     const query1 =
       "select pe.eId,eh.name from practitioner_emphasis as pe left join emphasis_healing as eh on eh.eId = pe.eId where pe.communityId =? ";
     const query2 =
       "select pa.aId,ah.name from practitioner_area as pa left join area_healing as ah on ah.aId = pa.aId where pa.communityId =? ";
+    const query3 =
+      "select cm.profileId from communityMembers as cm where cm.communityId = ?;";
     if (Object.hasOwnProperty.call(communityList, key)) {
       const community = communityList[key];
       const values1 = [community.Id];
       const emphasis = await executeQuery(query1, values1);
       const areas = await executeQuery(query2, values1);
-      const members = await executeQuery(query, values1);
-      community.member = members.length;
       const memberList = [];
-      members.map((e) => {  
+      const members = await executeQuery(query3, values1);
+      members.map((e) => {
         memberList?.push(e.profileId);
       });
       community.memberList = memberList;
+      community.members = members.length;
       community.emphasis = emphasis;
       community.areas = areas;
       localCommunities.push(community);
@@ -397,28 +390,41 @@ Community.getJoinedCommunityByProfileId = async function (id, pageType) {
   return joinedCommunityList;
 };
 
-Community.addEmphasis = async function (communityId, data) {
-  if (data) {
-    const newData = data
+Community.addEmphasis = async function (
+  communityId,
+  emphasisList,
+  removeEmphasisList
+) {
+  if (emphasisList.length) {
+    const newData = emphasisList
       .map((element) => `(${communityId}, ${element})`)
       .join(", ");
     const query = `insert into practitioner_emphasis (communityId,eId) values ${newData}`;
     const emphasis = await executeQuery(query);
     return emphasis;
   }
+  if (removeEmphasisList.length) {
+    const query = `delete from practitioner_emphasis where communityId = ${communityId} and eId in (${removeEmphasisList})`;
+    const interests = await executeQuery(query);
+    return interests;
+  }
 };
 
-Community.addAreas = async function (communityId, data) {
-  if (data) {
-    const newData = data
+Community.addAreas = async function (communityId, areaList, removeAreaList) {
+  if (areaList.length) {
+    const newData = areaList
       .map((element) => `(${communityId}, ${element})`)
       .join(", ");
     const query = `insert into practitioner_area (communityId,aId) values ${newData}`;
     const areas = await executeQuery(query);
     return areas;
   }
+  if (removeAreaList.length) {
+    const query = `delete from practitioner_area where communityId = ${communityId} and aId in (${removeAreaList})`;
+    const interests = await executeQuery(query);
+    return interests;
+  }
 };
-
 Community.getEmphasisAndArea = async function () {
   const query = "select * from emphasis_healing";
   const emphasis = await executeQuery(query);

@@ -1,5 +1,4 @@
 var db = require("../../config/db.config");
-require("../common/common")();
 const { getPagination, getPaginationData } = require("../helpers/fn");
 const { executeQuery } = require("../helpers/utils");
 const { notificationMail } = require("../helpers/utils");
@@ -55,15 +54,34 @@ Post.findAll = async function (params) {
   const { limit, offset } = getPagination(page, size);
   const communityCondition = communityId
     ? `p.communityId = ${communityId} AND p.posttype in ('S', 'R','V') AND`
-    : "p.communityId IS NULL AND p.posttype in ('S', 'R','V') AND";
+    : "p.posttype in ('S', 'R','V') AND";
+  // : "p.communityId IS NULL AND p.posttype in ('S', 'R','V') AND";
 
-  const query = `SELECT p.*, pl.ActionType as react, pr.ProfilePicName, pr.Username, pr.FirstName, groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink
+  const query = `SELECT p.*, pl.ActionType as react, pr.ProfilePicName, pr.Username, pr.FirstName, groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink,
+    c.CommunityName as communityName, c.slug as slug,c.pageType,c.logoImg,c.coverImg
   from 
   posts as p left join postlikedislike as pl on pl.ProfileID = ? and pl.PostID = p.id left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID 
+  left join community as c on p.communityId = c.id
   where ${communityCondition}
   p.profileid not in (SELECT UnsubscribeProfileId FROM unsubscribe_profiles where ProfileId = ?) AND p.isdeleted ='N' order by p.profileid in (SELECT SeeFirstProfileId from see_first_profile where ProfileId=?) DESC, p.id DESC limit ? offset ?`;
   const values = [profileId, profileId, profileId, limit, offset];
   const posts = await executeQuery(query, values);
+  for (const key in posts) {
+    if (Object.hasOwnProperty.call(posts, key)) {
+      const post = posts[key];
+      const query = `select * from post_media where postId = ${post.id}`;
+      const postMedia = await executeQuery(query);
+      const imagesList = [];
+      for (const media of postMedia) {
+        imagesList.push({
+          imageUrl: media.imageUrl,
+          id: media.id,
+          pdfUrl: media.pdfUrl,
+        });
+      }
+      post["imagesList"] = imagesList || [];
+    }
+  }
 
   return getPaginationData(
     {
@@ -76,7 +94,7 @@ Post.findAll = async function (params) {
 };
 
 Post.getPostByProfileId = async function (params) {
-  const { page, size, profileId, startDate, endDate } = params;
+  const { page, size, profileId, startDate, endDate, searchText } = params;
   const { limit, offset } = getPagination(page, size);
   let whereCondition = "";
   if (startDate && endDate) {
@@ -87,9 +105,28 @@ Post.getPostByProfileId = async function (params) {
   } else if (endDate) {
     whereCondition += `AND p.postcreationdate <= '${endDate}'`;
   }
-  const query = `SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName, groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID where p.isdeleted ='N' and p.profileid =? and p.posttype in ('S', 'R','V') ${whereCondition} order by p.postcreationdate DESC limit ? offset ?;`;
+  if (searchText) {
+    whereCondition += `AND p.postdescription LIKE '%${searchText}%'`;
+  }
+  const query = `SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName,groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink, c.CommunityName as communityName, c.slug as slug,c.pageType,c.logoImg,c.coverImg from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID left join community as c on p.communityId = c.id where p.profileid =? and p.posttype in ('S', 'R','V') ${whereCondition} order by p.postcreationdate DESC limit ? offset ?;`;
   const values = [profileId, limit, offset];
   const postData = await executeQuery(query, values);
+  for (const key in postData) {
+    if (Object.hasOwnProperty.call(postData, key)) {
+      const post = postData[key];
+      const query = `select * from post_media where postId = ${post.id}`;
+      const postMedia = await executeQuery(query);
+      const imagesList = [];
+      for (const media of postMedia) {
+        imagesList.push({
+          imageUrl: media.imageUrl,
+          id: media.id,
+          pdfUrl: media.pdfUrl,
+        });
+      }
+      post["imagesList"] = imagesList || [];
+    }
+  }
   // return postData;
   return getPaginationData(
     {
@@ -100,34 +137,104 @@ Post.getPostByProfileId = async function (params) {
     limit
   );
 };
+
+Post.getAllPosts = async function (params) {
+  const { page, size, startDate, endDate } = params;
+  const { limit, offset } = getPagination(page, size);
+  let whereCondition = "";
+  if (startDate && endDate) {
+    whereCondition += `AND p.postcreationdate >= '${startDate}' AND p.postcreationdate <= '${endDate}'`;
+    console.log(whereCondition);
+  } else if (startDate) {
+    whereCondition += `AND p.postcreationdate >= '${startDate}'`;
+  } else if (endDate) {
+    whereCondition += `AND p.postcreationdate <= '${endDate}'`;
+  }
+  const query = `SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName,groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink,  c.CommunityName as communityName, c.slug as slug,c.pageType,c.logoImg,c.coverImg from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID left join community as c on p.communityId = c.id where p.posttype in ('S', 'R','V') ${whereCondition} order by p.postcreationdate DESC limit ? offset ?;`;
+  const values = [limit, offset];
+  const postData = await executeQuery(query, values);
+  const postCount = await executeQuery("select count(id) as count from posts");
+  console.log(postCount);
+  for (const key in postData) {
+    if (Object.hasOwnProperty.call(postData, key)) {
+      const post = postData[key];
+      const query = `select * from post_media where postId = ${post.id}`;
+      const postMedia = await executeQuery(query);
+      const imagesList = [];
+      for (const media of postMedia) {
+        imagesList.push({
+          imageUrl: media.imageUrl,
+          id: media.id,
+          pdfUrl: media.pdfUrl,
+        });
+      }
+      post["imagesList"] = imagesList || [];
+    }
+  }
+  // return postData;
+  return getPaginationData(
+    {
+      count: postCount[0].count,
+      docs: postData,
+    },
+    page,
+    limit
+  );
+};
+
 Post.getPostByPostId = function (profileId, result) {
   db.query(
     // "SELECT * from posts where isdeleted ='N' order by postcreationdate DESC limit 15 ",
-    "SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName, groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID where p.isdeleted ='N' and p.id =? ;",
+    "SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName,groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink,   c.CommunityName as communityName, c.slug as slug,c.pageType,c.logoImg,c.coverImg  from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID left join community as c on p.communityId = c.id where p.isdeleted ='N' and p.id =? ;",
     profileId,
-    function (err, res) {
+    async function (err, res) {
       if (err) {
         console.log("error", err);
         result(err, null);
       } else {
-        // console.log("post: ", res);
+        console.log("post: ", res);
+        for (const key in res) {
+          if (Object.hasOwnProperty.call(res, key)) {
+            const post = res[key];
+            const query = `select * from post_media where postId = ${post.id}`;
+            const postMedia = await executeQuery(query);
+            const imagesList = [];
+            for (const media of postMedia) {
+              imagesList.push({
+                imageUrl: media.imageUrl,
+                id: media.id,
+                pdfUrl: media.pdfUrl,
+              });
+            }
+            post["imagesList"] = imagesList || [];
+          }
+        }
         result(null, res);
       }
     }
   );
 };
 
-Post.getPdfsFile = function (profileId, result) {
+Post.getPdfsFile = async function (profileId, result) {
   db.query(
-    // "SELECT * from posts where isdeleted ='N' order by postcreationdate DESC limit 15 ",
-    "SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName from posts as p left join profile as pr on p.profileid = pr.ID where p.isdeleted ='N' and p.pdfUrl is not null and p.profileid =? ;",
+    `SELECT p.*, 
+       pr.ProfilePicName, 
+       pr.Username, 
+       pr.FirstName
+      FROM posts AS p 
+      LEFT JOIN profile AS pr ON p.profileid = pr.ID 
+      WHERE p.isdeleted = 'N' 
+      AND p.pdfUrl IS NOT NULL 
+      AND p.profileid = ? 
+      ORDER BY p.postcreationdate DESC;`,
+    // LEFT JOIN post_media AS pm ON pm.postId = p.id
     +profileId,
     function (err, res) {
       if (err) {
         console.log("error", err);
         result(err, null);
       } else {
-        // console.log("post: ", res);
+        console.log("post: ", res);
         result(null, res);
       }
     }
@@ -179,21 +286,17 @@ Post.create = async function (postData) {
   return post;
 };
 
-Post.delete = async function (id) {
-  // db.query("DELETE FROM posts WHERE id = ?", [id], function (err, res) {
-  //   if (err) {
-  //     console.log("error", err);
-  //     result(err, null);
-  //   } else {
-  //     console.log("Post deleted sucessfully", res);
-  //     result(null, res);
-  //   }
-  // });
-  const query = "DELETE FROM posts WHERE id = ?";
-  const query1 = "DELETE FROM comments WHERE postId = ?";
+Post.hidePost = async function (id, isDeleted) {
+  const query = `update posts set isdeleted = '${isDeleted}' WHERE id = ?`;
   const value = [id];
   const deletePost = await executeQuery(query, value);
-  const deleteComments = await executeQuery(query1, value);
+  return deletePost;
+};
+
+Post.deletePost = async function (id) {
+  const query = "DELETE FROM posts WHERE id = ?";
+  const value = [id];
+  const deletePost = await executeQuery(query, value);
   return deletePost;
 };
 
@@ -250,8 +353,8 @@ Post.getPostComments = async function (profileId, postId) {
     })`;
     const values = [profileId];
     const replyCommnetsList = await executeQuery(query, values);
-    const countQuery = `select count(id) as count from comments where postId = ${postId} `;
-    const [{count}] = await executeQuery(countQuery);
+    const countQuery = `select count(id) as count from comments where postId = '${postId}' `;
+    const [{ count }] = await executeQuery(countQuery);
     console.log(count, "comments count");
 
     return {

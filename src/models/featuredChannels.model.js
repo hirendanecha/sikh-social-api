@@ -1,6 +1,5 @@
 "use strict";
 var db = require("../../config/db.config");
-require("../common/common")();
 const { executeQuery, channelNotificationEmail } = require("../helpers/utils");
 
 var featuredChannels = function (data) {
@@ -142,6 +141,7 @@ featuredChannels.CreateSubAdmin = async function (data, result) {
     result("Already assigned", null);
   }
 };
+
 featuredChannels.getPostDetails = async function (id) {
   const query =
     "select p.*,fc.firstname,fc.unique_link,fc.profile_pic_name,fc.created,fc.id as channelId from posts as p left join featured_channels as fc on fc.profileid = p.profileid where p.id = ?";
@@ -275,6 +275,15 @@ featuredChannels.removeFormChannel = function (profileId, channelId, result) {
       }
     }
   );
+};
+
+featuredChannels.createChannelApplication = async function (data) {
+  const query = "insert into channel_application set ?";
+  const values = data;
+  const application = await executeQuery(query, values);
+  if (application) {
+    return application;
+  }
 };
 
 module.exports = featuredChannels;

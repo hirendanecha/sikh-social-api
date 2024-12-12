@@ -1,6 +1,7 @@
 const { executeQuery } = require("../helpers/utils");
 const { notificationMail } = require("../helpers/utils");
 const { getPagination, getCount, getPaginationData } = require("../helpers/fn");
+const og = require("open-graph");
 const { param } = require("../routes");
 const UserRewardDetails = require("../models/userRewardDetails.model");
 
@@ -63,6 +64,18 @@ exports.deletePost = async function (data) {
   return await deletePost(data);
 };
 
+exports.getMeta = function (data) {
+  return getMetaD(data);
+};
+
+exports.readNotification = function (data) {
+  return readNotification(data);
+};
+
+exports.suspendUser = function (data) {
+  return suspendUser(data);
+};
+
 const getPost = async function (params) {
   const { page, size, profileId, communityId } = params;
   const { limit, offset } = getPagination(page, size);
@@ -78,18 +91,20 @@ const getPost = async function (params) {
   // AND p.isdeleted ='N' order by p.profileid in (SELECT SeeFirstProfileId from see_first_profile where ProfileId=?)
   const values = [profileId, profileId, profileId, limit, offset];
   const posts = await executeQuery(query, values);
-  // if (posts.length > 0) {
-  //   for (const key in posts) {
-  //     if (Object.hasOwnProperty.call(posts, key)) {
-  //       const post = posts[key];
-  //       const query =
-  //         "select c.*,pr.ProfilePicName, pr.Username, pr.FirstName from comments as c left join profile as pr on pr.ID = c.profileId where c.postId = ?";
-  //       const value = [post.id];
-  //       const comment = await executeQuery(query, value);
-  //       post.commentList = comment;
-  //     }
-  //   }
-  // }
+  if (posts.length > 0) {
+    for (const key in posts) {
+      if (Object.hasOwnProperty.call(posts, key)) {
+        const post = posts[key];
+        const query = `select * from post_media where postId = ${post.id}`;
+        const postMedia = await executeQuery(query);
+        const imagesList = [];
+        for (const media of postMedia) {
+          imagesList.push({ imageUrl: media.imageUrl, id: media.id });
+        }
+        post["imagesList"] = imagesList || [];
+      }
+    }
+  }
   return posts;
 };
 
@@ -120,12 +135,40 @@ const createNewPost = async function (data) {
   };
   postData.isdeleted = "N";
 
-  console.log("postData", postData);
+  console.log("postData", data?.imagesList?.length);
   const query = data?.id
     ? `update posts set ? where id= ?`
     : `INSERT INTO posts set ?`;
   const values = data?.id ? [postData, data?.id] : [postData];
   const post = await executeQuery(query, values);
+  if (data?.imagesList?.length) {
+    for (const key in data?.imagesList) {
+      if (Object.hasOwnProperty.call(data?.imagesList, key)) {
+        const image = data?.imagesList[key];
+        console.log("image==>", image);
+        if (!image?.id) {
+          const query = `insert into post_media set ?`;
+          const values = [
+            {
+              postId: post?.insertId || data?.id,
+              imageUrl: image?.imageUrl,
+              pdfUrl: image?.pdfUrl,
+            },
+          ];
+          await executeQuery(query, values);
+        }
+      }
+    }
+  }
+  if (data?.removeImagesList) {
+    for (const key in data?.removeImagesList) {
+      if (Object.hasOwnProperty.call(data?.removeImagesList, key)) {
+        const image = data?.removeImagesList[key];
+        const query = `delete from post_media where id = ${image?.id}`;
+        await executeQuery(query);
+      }
+    }
+  }
 
   const notifications = [];
   if (post) {
@@ -148,24 +191,26 @@ const createNewPost = async function (data) {
             notificationByProfileId: postData?.profileid,
             actionType: "T",
           });
-          const findUser = `select u.Email,p.FirstName,p.LastName,p.Username from users as u left join profile as p on p.UserID = u.Id where p.ID = ?`;
+          const findUser = `select u.Email,p.FirstName,p.LastName,p.Username from users as u left join profile as p on p.UserID = u.Id where p.postNotificationEmail = 'Y' and p.ID = ?`;
           const values = [tag?.id];
           const userData = await executeQuery(findUser, values);
-          const findSenderUser = `select p.ID,p.Username,p.FirstName,p.LastName from profile as p where p.ID = ?`;
-          const values1 = [postData?.profileid];
-          const senderData = await executeQuery(findSenderUser, values1);
-          notifications.push(notification);
-          if (tag?.id) {
-            const userDetails = {
-              email: userData[0].Email,
-              profileId: senderData[0].ID,
-              userName: userData[0].Username,
-              senderUsername: senderData[0].Username,
-              firstName: userData[0].FirstName,
-              type: "post",
-              postId: notification?.postId || postData?.id,
-            };
-            await notificationMail(userDetails);
+          if (userData?.length) {
+            const findSenderUser = `select p.ID,p.Username,p.FirstName,p.LastName from profile as p where p.ID = ?`;
+            const values1 = [postData?.profileid];
+            const senderData = await executeQuery(findSenderUser, values1);
+            notifications.push(notification);
+            if (tag?.id) {
+              const userDetails = {
+                email: userData[0].Email,
+                profileId: senderData[0].ID,
+                userName: userData[0].Username,
+                senderUsername: senderData[0].Username,
+                firstName: userData[0].FirstName,
+                type: "post",
+                postId: notification?.postId || postData?.id,
+              };
+              await notificationMail(userDetails);
+            }
           }
         }
       }
@@ -174,6 +219,20 @@ const createNewPost = async function (data) {
     const query1 = `SELECT p.*, pr.ProfilePicName, pr.Username, pr.FirstName,groupPr.FirstName as groupName, groupPr.UniqueLink as groupLink from posts as p left join profile as pr on p.profileid = pr.ID left join profile as groupPr on p.posttoprofileid = groupPr.ID where p.isdeleted ='N' and p.id =? ;`;
     const values1 = [data?.id || post.insertId];
     const posts = await executeQuery(query1, values1);
+    const query2 = `select * from post_media where postId = ${
+      data?.id || post.insertId
+    }`;
+    const postMedia = await executeQuery(query2);
+    const imagesList = [];
+    for (const media of postMedia) {
+      imagesList.push({
+        imageUrl: media.imageUrl,
+        id: media.id,
+        pdfUrl: media.pdfUrl,
+      });
+    }
+    posts[0]["imagesList"] = imagesList || [];
+    console.log("new-post", posts);
     return { notifications, posts };
   }
 };
@@ -324,13 +383,18 @@ const createNotification = async function (params) {
     notificationByProfileId,
     actionType,
     commentId,
+    channelId,
   } = params;
   const query =
     "SELECT ID,ProfilePicName, Username, FirstName,LastName from profile where ID = ?";
   const values = [notificationByProfileId];
   const userData = await executeQuery(query, values);
   let desc = "";
-  if (commentId && actionType === "L") {
+  if (channelId) {
+    desc = `${
+      userData[0]?.Username || userData[0]?.FirstName
+    } has subscribed your channel`;
+  } else if (commentId && actionType === "L") {
     desc = `${
       userData[0]?.Username || userData[0]?.FirstName
     } liked your Comment.`;
@@ -438,24 +502,26 @@ const createComments = async function (params) {
             commentId: params?.id || commentData.insertId,
           });
           console.log("notification", notification);
-          const findUser = `select u.Email,p.FirstName,p.LastName,p.Username from users as u left join profile as p on p.UserID = u.Id where p.ID = ?`;
+          const findUser = `select u.Email,p.FirstName,p.LastName,p.Username from users as u left join profile as p on p.UserID = u.Id where p.postNotificationEmail = 'Y' and p.ID = ?`;
           const values = [tag?.id];
           const userData = await executeQuery(findUser, values);
-          const findSenderUser = `select p.ID,p.Username,p.FirstName,p.LastName from profile as p where p.ID = ?`;
-          const values1 = [data?.profileId];
-          const senderData = await executeQuery(findSenderUser, values1);
-          notifications.push(notification);
-          if (tag?.id) {
-            const userDetails = {
-              email: userData[0].Email,
-              profileId: senderData[0].ID,
-              userName: userData[0].Username,
-              firstName: userData[0].FirstName,
-              senderUsername: senderData[0].Username,
-              type: "comment",
-              postId: notification?.postId || postData?.id,
-            };
-            await notificationMail(userDetails);
+          if (userData?.length) {
+            const findSenderUser = `select p.ID,p.Username,p.FirstName,p.LastName from profile as p where p.ID = ?`;
+            const values1 = [data?.profileId];
+            const senderData = await executeQuery(findSenderUser, values1);
+            notifications.push(notification);
+            if (tag?.id) {
+              const userDetails = {
+                email: userData[0].Email,
+                profileId: senderData[0].ID,
+                userName: userData[0].Username,
+                firstName: userData[0].FirstName,
+                senderUsername: senderData[0].Username,
+                type: "comment",
+                postId: notification?.postId || postData?.id,
+              };
+              await notificationMail(userDetails);
+            }
           }
         }
       }
@@ -522,4 +588,47 @@ const deletePost = async function (params) {
   const deletePost = await executeQuery(query, value);
   const deleteComments = await executeQuery(query1, value);
   return deletePost;
+};
+
+const readNotification = async function (id) {
+  try {
+    const query = `update notifications set isRead = 'Y' where notificationToProfileId = ${id} `;
+    const notification = await executeQuery(query);
+    return true;
+  } catch (error) {
+    return error;
+  }
+};
+
+const ogPromise = (url) => {
+  return new Promise((resolve, reject) => {
+    og(url, async function (err, meta) {
+      if (err) {
+        reject(err);
+      } else {
+        const data = meta;
+        resolve(data);
+      }
+    });
+  });
+};
+
+const getMetaD = async function (params) {
+  const { url } = params;
+  if (url) {
+    return await ogPromise(url);
+  } else {
+    return null;
+  }
+};
+
+const suspendUser = async function (params) {
+  try {
+    const query = "UPDATE users SET IsSuspended = ? WHERE Id= ?";
+    const values = [params.isSuspended, params.id];
+    const user = await executeQuery(query, values);
+    return user;
+  } catch (error) {
+    return error;
+  }
 };

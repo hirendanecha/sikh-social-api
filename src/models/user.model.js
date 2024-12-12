@@ -48,6 +48,12 @@ User.login = function (email, Id, result) {
             p.DefaultUniqueLink,
             p.UniqueLink,
             p.AccountType,
+            p.userStatus,
+            p.messageNotificationSound,
+            p.callNotificationSound,
+            p.tagNotificationSound,
+            p.messageNotificationEmail,
+            p.postNotificationEmail,
             cm.communityId
      FROM users as u left join profile as p on p.UserID = u.Id AND p.AccountType in ('I','M') left join communityMembers as cm on cm.profileId = p.ID WHERE u.Email = ? OR u.Username = ? AND u.Id = ?`,
     [email, email, Id],
@@ -87,7 +93,12 @@ User.login = function (email, Id, result) {
             null
           );
         } else {
-          const token = await generateJwtToken(res[0]);
+          // const token = await generateJwtToken(res[0]);
+          const token = await generateJwtToken({
+            profileId: res[0].profileId,
+            Username: res[0].Username,
+            IsActive: res[0].IsActive,
+          });
           const query =
             "select c.channelId from channelAdmins as c left join profile as p on p.ID = c.profileId where c.profileId = p.ID and p.UserID = ?;";
           const value = [Id];
@@ -118,7 +129,9 @@ User.create = function (userData, result) {
 
 User.findAndSearchAll = async (limit, offset, search, startDate, endDate) => {
   let whereCondition = `u.IsAdmin != 'Y' ${
-    search ? `AND u.Username LIKE '%${search}%' OR u.Email LIKE '%${search}%'` : ""
+    search
+      ? `AND u.Username LIKE '%${search}%' OR u.Email LIKE '%${search}%'`
+      : ""
   }`;
 
   if (startDate && endDate) {
@@ -289,7 +302,12 @@ User.adminLogin = function (email, result) {
         } else {
           console.log("Login Data");
           console.log(user);
-          const token = await generateJwtToken(res[0]);
+          // const token = await generateJwtToken(res[0]);
+          const token = await generateJwtToken({
+            profileId: res[0].Id,
+            Username: res[0].Username,
+            IsActive: res[0].IsActive,
+          });
           return result(null, {
             userId: user.Id,
             user: user,
@@ -432,12 +450,13 @@ User.verification = function (token, result) {
       return result(err, decodedToken);
     }
     try {
+      console.log(decoded);
       const updateQuery = await executeQuery(
         "UPDATE users SET IsActive ='Y' WHERE Id = ?",
-        [decoded.userId]
+        [decoded.user.userId]
       );
       const fetchUser = await executeQuery("select * from users where Id = ?", [
-        decoded.userId,
+        decoded.user.userId,
       ]);
       console.log("fetchUser", updateQuery, fetchUser);
       return result(null, fetchUser[0]);

@@ -60,7 +60,7 @@ exports.updateProfile = async function (req, res) {
   if (req.body.constructor === Object && Object.keys(req.body).length === 0) {
     res.status(400).send({ error: true, message: "Error in application" });
   } else {
-    const profileId = req.params.id;
+    const profileId = +req.params.id;
     const reqBody = req.body;
     const profile = new Profile({ ...reqBody });
     const existingUsername = req.user.username;
@@ -73,7 +73,7 @@ exports.updateProfile = async function (req, res) {
         .json({ error: true, message: "Username is already exist" });
     }
 
-    if (req.body.Id === req.user.id) {
+    if (profileId === req.user.id) {
       if (req.body.UserID) {
         const updateUserData = {
           Username: reqBody?.Username,
@@ -130,6 +130,21 @@ exports.editNotifications = async function (req, res) {
   });
 };
 
+exports.editNotificationSound = async function (req, res) {
+  try {
+    const { id } = req.user;
+    const { property, value } = req.body;
+    console.log("In====>", id, property, value);
+    await Profile.editNotificationSound(id, property, value);
+    return res.json({
+      error: false,
+      message: "successfully changed notification sound",
+    });
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
 exports.getNotificationById = async function (req, res) {
   const { id } = req.params;
   const { page, size } = req.body;
@@ -143,8 +158,11 @@ exports.getNotificationById = async function (req, res) {
       limit
     )
   );
+  // return res.send({
+  //   error: false,
+  //   data: data,
+  // });
 };
-
 exports.getNotification = async function (req, res) {
   const { id } = req.params;
   const data = await Profile.getNotification(id);
@@ -215,4 +233,98 @@ exports.getGroupFileResourcesById = async function (req, res) {
   } catch (error) {
     return utils.send500(res, error);
   }
+};
+
+exports.groupsLists = async function (req, res) {
+  try {
+    const { page, size, search, pageType, startDate, endDate } = req.body;
+    const { limit, offset } = getPagination(page, size);
+    const groupedPosts = await Profile.groupsLists(
+      limit,
+      offset,
+      search,
+      pageType,
+      startDate,
+      endDate
+    );
+
+    return res.send(
+      getPaginationData(
+        { count: groupedPosts.count, docs: groupedPosts.data },
+        page,
+        limit
+      )
+    );
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
+exports.createGroup = async function (req, res) {
+  try {
+    const data = req.body;
+    const groups = await Profile.createGroup(data);
+    return res.send(groups);
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+exports.editGroups = async function (req, res) {
+  try {
+    const { id } = req.params;
+    const data = req.body.groupData;
+    const membersIds = req.body.selectedMembers;
+    const groups = await Profile.editGroups(id, data, membersIds);
+    return res.send(groups);
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
+exports.joinGroup = async function (req, res) {
+  try {
+    const { id } = req.user;
+    const { researchProfileId } = req.body;
+    const group = await Profile.joinGroup(id, researchProfileId);
+    return res.send(group);
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
+exports.leaveGroup = async function (req, res) {
+  try {
+    // const { id } = req.user;
+    const { researchProfileId, profileId } = req.body;
+    const group = await Profile.leaveGroup(profileId, researchProfileId);
+    return res.send(group);
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
+exports.deleteGroup = async function (req, res) {
+  try {
+    // const { id } = req.user;
+    const { id } = req.params;
+    const group = await Profile.deleteGroup(id);
+    return res.send(group);
+  } catch (error) {
+    return utils.send500(res, error);
+  }
+};
+
+exports.readAllNotifications = async function (req, res) {
+  const { id } = req.params;
+  Profile.readAllNotifications(id, function (err) {
+    if (err) return utils.send500(res, err);
+    res.json({ error: false, message: "Notification updated successfully" });
+  });
+};
+
+exports.deleteAllNotification = function (req, res) {
+  Profile.deleteAllNotification(req.params.id, function (err, result) {
+    if (err) return utils.send500(res, err);
+    res.json({ error: false, message: "Notification deleted successfully" });
+  });
 };
