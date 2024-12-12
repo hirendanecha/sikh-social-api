@@ -19,6 +19,8 @@ const appointments = require("./appointments.routes");
 const plansRouter = require("./plans.routes");
 const advertizementRouter = require("./advertizment.routes");
 const messageRouter = require("./message.routes");
+const bugsAndReports = require("./bugs-reports.routes");
+const subscribeChannelRouter = require("./subscribeChannel.routes");
 
 router.use("/login", authRoutes);
 router.use("/customers", userRoutes);
@@ -37,6 +39,8 @@ router.use("/channels", featuredChannels);
 router.use("/stripe", stripeRouter);
 router.use("/appointments", appointments);
 router.use("/plans", plansRouter);
+router.use("/bugs-reports", bugsAndReports);
+router.use("/subscribe", subscribeChannelRouter);
 router.use("/advertizement", advertizementRouter);
 router.use("/messages", messageRouter);
 
