@@ -15,8 +15,8 @@ exports.authorization = async function (req, res, next) {
     try {
       const decoded = jwt.verify(token, env.JWT_SECRET_KEY);
       req.user = decoded.user;
-      if (decoded?.user && (decoded?.user?.username !== "admin" || decoded.user.Username !== "admin")) {
-        const [profile] = await Profile.FindById(decoded?.user?.id || decoded?.user?.Id);
+      if (decoded.user && decoded.user.username !== "admin") {
+        const [profile] = await Profile.FindById(decoded.user.id);
 
         if (profile?.IsSuspended === "Y") {
           res

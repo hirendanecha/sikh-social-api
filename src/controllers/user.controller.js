@@ -85,8 +85,8 @@ exports.login = async function (req, res) {
 };
 exports.getToken = async function (req, res) {
   try {
+    console.log("user==>", req.user);
     const [user] = await Profile.FindById(req.user.id);
-    console.log("user", user);
 
     if (user) {
       if (user.IsSuspended === "Y") {
