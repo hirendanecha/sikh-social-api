@@ -2,9 +2,8 @@ const Post = require("../models/post.model");
 const utils = require("../helpers/utils");
 const s3 = require("../helpers/aws-s3.helper");
 const og = require("open-graph");
-const { getPagination, getCount, getPaginationData } = require("../helpers/fn");
-// const socket = require("../helpers/socket.helper");
-const io = require("socket.io-client");
+const axios = require("axios");
+const environment = require("../environments/environment");
 
 exports.findAll = async function (req, res) {
   const postData = await Post.findAll(req.body);
@@ -14,6 +13,14 @@ exports.findAll = async function (req, res) {
 exports.getPostByProfileId = async function (req, res) {
   console.log(req.body);
   const postList = await Post.getPostByProfileId(req.body);
+  if (postList) {
+    res.send({ data: postList });
+  }
+};
+
+exports.getAllPosts = async function (req, res) {
+  console.log(req.body);
+  const postList = await Post.getAllPosts(req.body);
   if (postList) {
     res.send({ data: postList });
   }
@@ -66,60 +73,150 @@ exports.createPost = async function (req, res) {
 };
 
 exports.uploadVideo = async function (req, res) {
-  console.log(req.file);
-  const url = await s3.uploadFileToWasabi(
-    req.file,
-    req.file?.originalname.replace(" ", "-")
-  );
-  console.log(url);
-  if (url) {
-    return res.json({
-      error: false,
-      url: url,
-    });
-  } else {
-    return utils.send500(res, err);
+  try {
+    console.log("req file ==>", req.files);
+    const { roomId, groupId } = req.query;
+    const imageList = [];
+
+    for (const file of req.files) {
+      const url = await s3.uploadFileToWasabi(
+        file,
+        file.originalname.replace(" ", "-")
+      );
+      console.log("url", url);
+      file?.mimetype?.includes("application")
+        ? imageList.push({ pdfUrl: url })
+        : imageList.push({ imageUrl: url });
+    }
+    console.log("imagesList", imageList);
+
+    if (imageList?.length > 0) {
+      return res.json({
+        error: false,
+        // url: url,
+        imagesList: imageList,
+        roomId: +roomId || null,
+        groupId: +groupId || null,
+      });
+    }
+  } catch (error) {
+    console.error(error);
+    return utils.send500(res, error);
   }
-  // if (Object.keys(req.body).length === 0) {
-  //   res.status(400).send({ error: true, message: "Error in application" });
-  // } else {
-  // Post.create(postData, function (err, post) {
-  //   if (err) {
-  //     return utils.send500(res, err);
-  //   } else {
-  //     return res.json({
-  //       error: false,
-  //       mesage: "Post created",
-  //       data: post,
-  //     });
-  //   }
-  // });
-  // }
 };
 
-exports.getMeta = function (req, res) {
-  const url = req.body.url;
-  console.log(url);
-  if (url) {
-    og(url, function (err, meta) {
+function getMetaData(url) {
+  return new Promise((resolve, reject) => {
+    og(url, (err, meta) => {
       if (err) {
-        return utils.send500(res, err);
+        reject(new Error(`Failed to fetch metadata for ${url}`));
       } else {
-        return res.json({
-          meta,
-        });
+        resolve(meta);
       }
     });
+  });
+}
+
+exports.getMeta = async function (req, res) {
+  const url = req.body.url;
+  if (url) {
+    const isYouTube =
+      /^(https?:\/\/)?(www\.)?(youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i.test(
+        url
+      );
+    console.log(isYouTube);
+    if (isYouTube) {
+      const data = await getYouTubeMeta(url);
+      if (data) {
+        res.json(data);
+      }
+    } else {
+      getMetaData(url)
+        .then((metaData) => {
+          if (metaData) {
+            const meta = {
+              title: metaData?.title || "",
+              description: metaData?.description || "",
+              site_name: metaData?.site_name || "",
+              url: url,
+              type: metaData?.type || "website",
+              image: metaData?.image || "",
+            };
+
+            console.log("meta===>", meta);
+            return res.json({ meta });
+          }
+        })
+        .catch((err) => {
+          return res.json(err);
+        });
+    }
+  } else {
+    return res.json({});
   }
 };
+
+async function getYouTubeMeta(url) {
+  const regex =
+    /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+  const match = regex.exec(url);
+
+  if (match) {
+    const videoId = match[1];
+    const apiKey = environment.google_api_key; // Ensure environment.google_api_key is set
+    const apiUrl = `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&key=${apiKey}&part=snippet`;
+
+    try {
+      const { data } = await axios.get(apiUrl);
+
+      if (data.items.length >= 0) {
+        const snippet = data.items[0].snippet;
+        const meta = {
+          title: snippet.title || "",
+          description: snippet.description || "",
+          site_name: "YouTube",
+          url: url,
+          type: data.items[0]?.kind || "website",
+          image:
+            snippet.thumbnails?.default || snippet.thumbnails?.medium || "",
+        };
+
+        return { meta };
+      } else {
+        throw new Error("No video data found");
+      }
+    } catch (error) {
+      console.error("Error fetching YouTube data:", error);
+      return { meta: {} };
+    }
+  }
+
+  return { meta: {} }; // Default return if URL is not a YouTube URL or extraction fails
+}
 
 exports.deletePost = function (req, res) {
   if (req.params.id) {
-    const data = Post.delete(req.params.id);
+    const data = Post.deletePost(req.params.id);
     if (data) {
       res.send({
         error: false,
-        message: "Post deleted sucessfully",
+        message: "Post deleted successfully",
+      });
+    } else {
+      return utils.send500(res, err);
+    }
+  } else {
+    return utils.send404(res, err);
+  }
+};
+exports.hidePost = function (req, res) {
+  if (req.params.id) {
+    const isDeleted = req.query.isDeleted;
+    const data = Post.hidePost(req.params.id, isDeleted);
+    if (data) {
+      res.send({
+        error: false,
+        message: "Post hide successfully",
       });
     } else {
       return utils.send500(res, err);
