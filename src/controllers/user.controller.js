@@ -452,7 +452,7 @@ exports.verification = function (req, res) {
     const token = await generateJwtToken(data);
     console.log(token);
     return res.redirect(
-      `${environments.FRONTEND_URL}/sikh-social?token=${token}`
+      `${environments.FRONTEND_URL}/sikh-registration?token=${token}`
     );
   });
 };
